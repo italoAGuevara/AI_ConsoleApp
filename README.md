@@ -1,0 +1,1 @@
+# AI_ConsoleApp_Ollama
