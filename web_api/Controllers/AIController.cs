@@ -15,10 +15,24 @@ namespace web_api.Controllers
 
         }
 
-        [HttpGet(Name = "chat")]
+        [HttpGet("chat", Name = "chat")]
         public async Task<IActionResult> Chat(string inputUser)
         {
             var result = await _AISerice.executeFunctionCaller(inputUser);
+            return Ok(result);
+        }
+
+        [HttpGet("embeddings", Name = "embeddings")]
+        public async Task<IActionResult> Embeddings(string inputUser)
+        {
+            var result = await _AISerice.executeTextEmbeddings(inputUser);
+            return Ok(result);
+        }
+
+        [HttpGet("rag", Name = "rag")]
+        public async Task<IActionResult> RAG(string inputUser)
+        {
+            var result = await _AISerice.executeRAG(inputUser);
             return Ok(result);
         }
     }
