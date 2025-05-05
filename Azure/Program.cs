@@ -1,114 +1,114 @@
-﻿// Instalación de la biblioteca .NET a través de NuGet: dotnet add package Azure.AI.OpenAI --prerelease
-using Azure;
-using Azure.AI.OpenAI;
-using Azure.Identity;
-using OpenAI.Chat;
-
-using static System.Environment;
+﻿using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
-using Azure_project;
-using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
 
-async Task RunAsync()
+class Program
 {
-    // Recuperación del punto de conexión de OpenAI a partir de las variables de entorno
-    var endpoint = GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? "";
-    if (string.IsNullOrEmpty(endpoint))
+    static readonly string openAiKey = "";
+    static readonly string openAiEndpoint = "";
+    static readonly string openAiEmbeddingDeployment = "";
+    static readonly string openAiChatDeployment = "";
+
+    static readonly string searchServiceName = "";
+    static readonly string searchIndexName = "";
+    static readonly string searchKey = "";
+
+    static async Task Main(string[] args)
     {
-        Console.WriteLine("Please set the AZURE_OPENAI_ENDPOINT environment variable.");
-        return;
+        string userQuery = "Quien es el autor?";
+
+        // 1. Obtener embedding del query
+        var queryEmbedding = await GetEmbeddingAsync(userQuery);
+
+        // 2. Buscar documentos similares en Azure Cognitive Search
+        var searchResults = await SearchSimilarDocumentsAsync(queryEmbedding);
+
+        // 3. Construir prompt con los documentos
+        string context = string.Join("\n---\n", searchResults);
+        string prompt = $"Usa el siguiente contexto para responder la pregunta:\n\n{context}\n\nPregunta: {userQuery}";
+
+        // 4. Enviar prompt al modelo GPT
+        var answer = await GetChatCompletionAsync(prompt);
+
+        Console.WriteLine("\n🧠 Respuesta:");
+        Console.WriteLine(answer);
     }
 
-    var key = "";
-    if (string.IsNullOrEmpty(key))
+    static async Task<List<float>> GetEmbeddingAsync(string input)
     {
-        Console.WriteLine("Please set the AZURE_OPENAI_KEY environment variable.");
-        return;
+        using var client = new HttpClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", openAiKey);
+
+        var payload = new { input = input, model = openAiEmbeddingDeployment };
+        var response = await client.PostAsJsonAsync("", payload);
+        var json = await response.Content.ReadAsStringAsync();
+
+        using var doc = JsonDocument.Parse(json);
+        var values = doc.RootElement.GetProperty("data")[0].GetProperty("embedding").EnumerateArray().Select(x => x.GetSingle()).ToList();
+        return values;
     }
 
-    AzureKeyCredential credential = new AzureKeyCredential(key);
-
-    // Inicialización de AzureOpenAIClient
-    AzureOpenAIClient azureClient = new(new Uri(endpoint), credential);
-
-    // Inicializar ChatClient con el nombre de implementación especificado
-    ChatClient chatClient = azureClient.GetChatClient("gpt-4o-mini");
-
-    // Crear una lista de mensajes de chat
-    var messages = new List<ChatMessage>
+    static async Task<List<string>> SearchSimilarDocumentsAsync(List<float> embedding)
     {
-    };
+        using var client = new HttpClient();
+        client.DefaultRequestHeaders.Add("api-key", searchKey);
 
-    messages.Add(new UserChatMessage("Give me some movies examples"));
-
-    // Crear opciones de finalización de chat
-    ChatResponseFormat chatResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
-jsonSchemaFormatName: "movie_result",
-jsonSchema: BinaryData.FromString("""
+        //var body = new
+        //{
+        //    vector = new
+        //    {
+        //        value = embedding,
+        //        k = 3,
+        //        fields = "embedding"
+        //    }
+        //};
+        var body = new
         {
-            "type": "object",
-            "properties": {
-                "Movies": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "Title": { "type": "string" },
-                            "Director": { "type": "string" },
-                            "ReleaseYear": { "type": "integer" },
-                            "Rating": { "type": "number" },
-                            "IsAvailableOnStreaming": { "type": "boolean" },
-                            "Tags": { "type": "array", "items": { "type": "string" } }
-                        },
-                        "required": ["Title", "Director", "ReleaseYear", "Rating", "IsAvailableOnStreaming", "Tags"],
-                        "additionalProperties": false
-                    }
-                }
+            search = "*",  // Match all documents
+            top = 3         // Limit the number of results
+        };
+
+
+        var response = await client.PostAsJsonAsync(
+            $"{searchIndexName}/docs/search?api-version=2023-07-01-Preview",
+            body);
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+
+        var docs = new List<string>();
+        foreach (var result in doc.RootElement.GetProperty("value").EnumerateArray())
+        {
+            if (result.TryGetProperty("content", out var contentElement))
+                docs.Add(contentElement.GetString());
+        }
+
+        return docs;
+    }
+
+    static async Task<string> GetChatCompletionAsync(string prompt)
+    {
+        using var client = new HttpClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", openAiKey);
+
+        var payload = new
+        {
+            messages = new[]
+            {
+                new { role = "system", content = "Eres un asistente útil." },
+                new { role = "user", content = prompt }
             },
-            "required": ["Movies"],
-            "additionalProperties": false
-        }
-        """),
-jsonSchemaIsStrict: true);
+            temperature = 0.7,
+            max_tokens = 500
+        };
 
+        var response = await client.PostAsJsonAsync(
+            $"",
+            payload);
 
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
 
-    var options = new ChatCompletionOptions
-    {
-        Temperature = (float)0.7,
-        MaxOutputTokenCount = 800,
-
-        TopP = (float)0.95,
-        FrequencyPenalty = (float)0,
-        PresencePenalty = (float)0,
-        ResponseFormat = chatResponseFormat
-    };
-
-   
-
-
-    try
-    {
-        // Crear la solicitud de finalización del chat
-        ChatCompletion completion = await chatClient.CompleteChatAsync(messages, options);
-
-        // Imprimir la respuesta
-        if (completion != null)
-        {
-            Console.WriteLine(JsonSerializer.Serialize(completion, new JsonSerializerOptions() { WriteIndented = true }));
-
-            Console.WriteLine("-------------------------------------------------------------------------\n");
-            Console.WriteLine(completion.Content.First().Text);
-        }
-        else
-        {
-            Console.WriteLine("No response received.");
-        }
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"An error occurred: {ex.Message}");
+        return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
     }
 }
-
-await RunAsync();
